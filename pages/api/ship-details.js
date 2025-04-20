@@ -62,11 +62,48 @@ export default async function handler(req, res) {
       return res.status(200).json(cachedResponse);
     }
     
-    console.log("Fetching access token from /api/token...");
-    const tokenResponse = await fetchWithRetry(
-      `${process.env.BASE_URL}/api/token`,
-      { method: "POST" }
-    );
+    console.log("Fetching access token directly...");
+    
+    // Import and directly call the token handler instead of making an HTTP request
+    const getToken = async () => {
+      const auth = require('./auth');
+      const mockReq = { method: 'POST' };
+      const mockRes = {
+        status: function(code) {
+          this.statusCode = code;
+          return this;
+        },
+        json: function(data) {
+          this.data = data;
+          return this;
+        }
+      };
+      
+      await auth.default(mockReq, mockRes);
+      
+      if (mockRes.statusCode !== 200 || !mockRes.data || !mockRes.data.jwt_assertion) {
+        throw new Error("Failed to get JWT from auth handler");
+      }
+      
+      // Now use the JWT to get the access token from Ankor API
+      const axios = require('axios');
+      const tokenResponse = await axios.post(
+        "https://api.ankor.io/iam/oauth/token",
+        new URLSearchParams({
+          grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+          assertion: mockRes.data.jwt_assertion,
+        }),
+        {
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+        }
+      );
+      
+      return { accessToken: tokenResponse.data.access_token };
+    };
+    
+    const tokenResponse = await getToken();
     const { accessToken } = tokenResponse;
 
     if (!accessToken) throw new Error("Failed to retrieve access token");
